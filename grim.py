@@ -1,6 +1,7 @@
 import tkinter as tk  # 파이썬의 기본 창 만들기 도구함(tkinter)을 불러와서 'tk'라는 별명으로 부릅니다.
-from tkinter import colorchooser, messagebox  # 색상 선택창과 알림창 기능을 따로 가져옵니다.
+from tkinter import colorchooser, messagebox, filedialog  # 색상 선택창과 알림창 기능을 따로 가져옵니다.
 import math  # 삼각형이나 별의 좌표를 계산하기 위해 수학 도구함을 가져옵니다.
+from PIL import Image, ImageDraw  # [수정] 저장을 위해 Pillow 라이브러리를 가져옵니다.
 
 class PyPaint:
     def __init__(self, root):
@@ -17,6 +18,10 @@ class PyPaint:
         self.start_x = None           # 마우스 클릭을 시작한 가로 위치
         self.start_y = None           # 마우스 클릭을 시작한 세로 위치
         self.current_obj = None       # 도형을 드래그할 때 실시간으로 그려지는 '임시 잔상'의 번호
+
+        # [수정] 저장용 보이지 않는 도화지(배경은 흰색)를 만듭니다. (가로 2000, 세로 2000 넉넉하게 뚱뚱하게)
+        self.image = Image.new("RGB", (2000, 2000), "white")
+        self.draw = ImageDraw.Draw(self.image)
 
         self.setup_ui()    # 화면(버튼, 도화지 등)을 만드는 함수를 실행합니다.
         self.bind_events() # 마우스 움직임과 코드를 연결하는 함수를 실행합니다.
@@ -49,7 +54,6 @@ class PyPaint:
 
         self.tool_buttons = {} # 생성된 버튼들을 저장해둘 주머니입니다.
         for icon, mode, label in tool_list:
-            # 버튼을 생성하고 클릭하면 set_mode 함수가 실행되도록 연결합니다.
             btn = tk.Button(tools_frame, text=f"{icon}\n{label}", font=("Arial", 9), 
                             width=6, height=3, compound="top",
                             command=lambda m=mode: self.set_mode(m))
@@ -68,6 +72,11 @@ class PyPaint:
         tk.Button(self.toolbar, text="🗑️\n전체삭제", font=("Arial", 9, "bold"), 
                   fg="white", bg="#ff4d4d", width=8, height=3, compound="top",
                   command=self.clear_canvas).pack(side="right", padx=10)
+        
+        # [저장 버튼]
+        tk.Button(self.toolbar, text="💾\n저장하기", font=("Arial", 9, "bold"),
+                  fg="white", bg="#4CAF50", width=8, height=3, compound="top",
+                  command=self.save_canvas).pack(side="right", padx=10) # [참고] save_canvas 호출
 
         # [도화지(캔버스)] 실제 그림이 그려지는 영역입니다.
         self.canvas = tk.Canvas(self.root, bg="white", cursor="cross", bd=2, relief="sunken")
@@ -82,7 +91,6 @@ class PyPaint:
     def set_mode(self, mode):
         """현재 도구를 변경하는 함수입니다."""
         self.mode = mode
-        # 선택된 버튼은 쑥 들어가 보이게 하고 나머지는 튀어나와 보이게 효과를 줍니다.
         for m, btn in self.tool_buttons.items():
             if m == mode:
                 btn.config(bg="#d0d0d0", relief="sunken")
@@ -91,44 +99,47 @@ class PyPaint:
 
     def choose_color(self):
         """팔레트 창을 띄워 색상을 고르게 합니다."""
-        color = colorchooser.askcolor(color=self.color)[1] # 고른 색의 이름(예: #ffffff)을 가져옵니다.
+        color = colorchooser.askcolor(color=self.color)[1]
         if color:
             self.color = color
-            self.color_btn.config(bg=self.color) # 버튼 배경색도 바꿉니다.
+            self.color_btn.config(bg=self.color)
 
     def update_size(self, val):
-        """슬라이더를 움직이면 선의 두께 숫자를 바꿉니다."""
         self.brush_size = int(val)
 
     def clear_canvas(self):
         """도화지를 싹 지웁니다."""
         self.canvas.delete("all")
+        # [수정] 저장용 가상 도화지도 하얗게 초기화합니다.
+        self.image = Image.new("RGB", (2000, 2000), "white")
+        self.draw = ImageDraw.Draw(self.image)
 
     def on_press(self, event):
         """마우스를 처음 딱 클릭했을 때 실행됩니다."""
-        self.start_x, self.start_y = event.x, event.y # 클릭한 지점의 좌표 저장
+        self.start_x, self.start_y = event.x, event.y
         
-        # '색채우기' 모드라면 클릭한 지점에 있는 도형을 찾아 색을 바꿉니다.
         if self.mode == "fill_bucket":
-            item = self.canvas.find_closest(event.x, event.y) # 가장 가까운 도형 찾기
+            item = self.canvas.find_closest(event.x, event.y)
             if item:
-                self.canvas.itemconfig(item, fill=self.color) # 해당 도형의 속(fill)을 채움
+                self.canvas.itemconfig(item, fill=self.color)
+                # 주의: 캔버스 fill_bucket은 가상 이미지 파일에는 완벽히 연동되기 어렵지만 기본 호환 유지
 
     def on_move(self, event):
         """마우스를 누른 채로 움직일 때 계속 실행됩니다."""
-        if self.mode == "fill_bucket": return # 채우기 모드일 땐 움직여도 아무것도 안 함
+        if self.mode == "fill_bucket": return
 
-        x1, y1 = self.start_x, self.start_y # 시작 위치
-        x2, y2 = event.x, event.y           # 현재 마우스 위치
+        x1, y1 = self.start_x, self.start_y
+        x2, y2 = event.x, event.y
 
         if self.mode in ["pen", "eraser"]:
-            # 펜이나 지우개는 움직이는 경로마다 아주 짧은 선들을 계속 그립니다.
             draw_color = self.color if self.mode == "pen" else self.eraser_color
             self.canvas.create_line(x1, y1, x2, y2, width=self.brush_size, 
                                     fill=draw_color, capstyle="round", smooth=True)
-            self.start_x, self.start_y = x2, y2 # 다음 선을 위해 시작점을 현재 위치로 갱신
+            
+            # [수정] 펜과 지우개질을 할 때 저장용 이미지 파일에도 선을 똑같이 그려줍니다.
+            self.draw.line([x1, y1, x2, y2], fill=draw_color, width=self.brush_size)
+            self.start_x, self.start_y = x2, y2
         else:
-            # 도형(사각형 등)은 드래그하는 동안 이전 잔상을 지우고 새로 그려서 '커지는 느낌'을 줍니다.
             if self.current_obj: self.canvas.delete(self.current_obj)
             
             if self.mode == "rect":
@@ -144,20 +155,57 @@ class PyPaint:
                 self.current_obj = self.draw_star(x1, y1, x2, y2)
 
     def draw_star(self, x1, y1, x2, y2):
-        """수학 공식을 이용해 별 모양의 꼭짓점 10개를 계산해서 그립니다."""
-        cx, cy = (x1 + x2) / 2, (y1 + y2) / 2 # 중심점
-        out_r = min(abs(x2 - x1), abs(y2 - y1)) / 2 # 별의 큰 반지름
-        in_r = out_r / 2.5 # 별의 쏙 들어간 부분 반지름
+        cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+        out_r = min(abs(x2 - x1), abs(y2 - y1)) / 2
+        in_r = out_r / 2.5
         pts = []
         for i in range(10):
-            ang = math.radians(i * 36 - 90) # 36도씩 돌아가며 좌표 계산
+            ang = math.radians(i * 36 - 90)
             r = out_r if i % 2 == 0 else in_r
             pts.extend([cx + r * math.cos(ang), cy + r * math.sin(ang)])
         return self.canvas.create_polygon(pts, outline=self.color, fill="", width=self.brush_size)
 
+    # [수정] 마우스를 뗄 때, 최종 확정된 도형들을 저장용 이미지에도 그려줍니다.
     def on_release(self, event):
-        """마우스 버튼을 떼면 임시 잔상 변수를 초기화합니다."""
+        x1, y1 = self.start_x, self.start_y
+        x2, y2 = event.x, event.y
+
+        if self.mode == "rect":
+            self.draw.rectangle([x1, y1, x2, y2], outline=self.color, width=self.brush_size)
+        elif self.mode == "oval":
+            self.draw.ellipse([x1, y1, x2, y2], outline=self.color, width=self.brush_size)
+        elif self.mode == "line":
+            self.draw.line([x1, y1, x2, y2], fill=self.color, width=self.brush_size)
+        elif self.mode == "triangle":
+            pts = [(x1+x2)/2, y1, x1, y2, x2, y2]
+            self.draw.polygon(pts, outline=self.color, width=self.brush_size)
+        elif self.mode == "star":
+            # 별의 좌표를 다시 계산해서 저장 이미지에 그리기
+            cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+            out_r = min(abs(x2 - x1), abs(y2 - y1)) / 2
+            in_r = out_r / 2.5
+            pts = []
+            for i in range(10):
+                ang = math.radians(i * 36 - 90)
+                r = out_r if i % 2 == 0 else in_r
+                pts.append((cx + r * math.cos(ang), cy + r * math.sin(ang)))
+            self.draw.polygon(pts, outline=self.color, width=self.brush_size)
+
         self.current_obj = None
+
+    # [수정] 클래스 안으로 들여쓰기를 맞춰서 포함시키고, 버튼이 요구하는 이름(save_canvas)으로 변경했습니다.
+    def save_canvas(self):
+        """현재까지 그린 이미지를 파일로 저장합니다."""
+        path = filedialog.asksaveasfilename(defaultextension=".png",
+                                             filetypes=[("PNG", "*.png"), ("JPEG", "*.jpg")])
+        if path:
+            # 윈도우 창 크기만큼 이미지를 잘라서 깔끔하게 저장합니다.
+            canvas_width = self.canvas.winfo_width()
+            canvas_height = self.canvas.winfo_height()
+            cropped_image = self.image.crop((0, 0, canvas_width, canvas_height))
+            
+            cropped_image.save(path)
+            messagebox.showinfo("저장 완료", "그림이 성공적으로 저장되었습니다!")
 
 # --- 프로그램 시작 부분 ---
 if __name__ == "__main__":
